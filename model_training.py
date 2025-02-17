@@ -1,125 +1,101 @@
-# model_training.py
-
 import os
 import numpy as np
+import librosa
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from tensorflow.keras.utils import to_categorical
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv1D, MaxPooling1D, Dropout, Flatten, Dense, BatchNormalization, GlobalAveragePooling1D
-from data_preprocessing import process_dataset, extract_mfcc, analyze_dataset
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import Conv1D, MaxPooling1D, LSTM, Dense, Dropout, BatchNormalization
 
-# Önce dataset'i analiz et
-print("Dataset analiz ediliyor...")
-dataset_stats = analyze_dataset('dataset2')
+# 📌 Ses Dosyasını Yükleme
+def load_audio(file_path, sr=16000):
+    try:
+        audio, sample_rate = librosa.load(file_path, sr=sr)
+        return audio, sample_rate
+    except Exception as e:
+        print(f"Hata - Dosya yüklenemedi: {file_path}, Hata: {e}")
+        return None, None
 
-# Veriyi yükle ve işle
-print("\nDataset işleniyor...")
-all_features, all_labels = process_dataset('dataset2')
+# 📌 MFCC Öznitelikleri Çıkarma
+def extract_mfcc(file_path, n_mfcc=40):
+    audio, sr = load_audio(file_path)
+    if audio is None:
+        return None
+    try:
+        mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=n_mfcc)
+        mfcc_mean = np.mean(mfcc.T, axis=0)
+        return mfcc_mean
+    except Exception as e:
+        print(f"MFCC çıkarma hatası - {file_path}, Hata: {e}")
+        return None
 
-if not all_features:
-    print("Hata: Dataset işlenemedi!")
-    exit()
+# 📌 Dataset'i İşleme
+def process_dataset(dataset_path, categories):
+    all_features, all_labels = [], []
+    for category in categories:
+        folder = os.path.join(dataset_path, category)
+        if os.path.exists(folder):
+            for filename in os.listdir(folder):
+                if filename.endswith('.wav'):
+                    file_path = os.path.join(folder, filename)
+                    feature_vector = extract_mfcc(file_path)
+                    if feature_vector is not None:
+                        all_features.append(feature_vector)
+                        all_labels.append(category)
+    return all_features, all_labels
 
-print("\nModel eğitimi başlıyor...")
+# 🔥 Eğitim İçin Ayarlar
+dataset_path = 'dataset2'
+categories = ['glass_breaking', 'fall', 'silence', 'scream']
+all_features, all_labels = process_dataset(dataset_path, categories)
 
-# Veriyi hazırla
 X = np.array(all_features)
 y = np.array(all_labels)
 
-# Etiketleri encode et
 label_encoder = LabelEncoder()
 y_encoded = label_encoder.fit_transform(y)
 y_onehot = to_categorical(y_encoded)
 
-# Veriyi yeniden şekillendir
 X = X.reshape(-1, 40, 1)
+X_train, X_test, y_train, y_test = train_test_split(X, y_onehot, test_size=0.2, random_state=42, stratify=y_encoded)
 
-# Eğitim ve test setlerine ayır
-X_train, X_test, y_train, y_test = train_test_split(X, y_onehot, test_size=0.2, random_state=42)
-
-print("\nVeri boyutları:")
-print(f"Eğitim seti: {X_train.shape}")
-print(f"Test seti: {X_test.shape}")
-
-# Model mimarisini güncelle
+# 📌 Model Mimarisi
 model = Sequential([
-    # Giriş katmanı
     Conv1D(64, 5, activation='relu', input_shape=(40, 1), padding='same'),
     BatchNormalization(),
     MaxPooling1D(2),
-    
-    # İlk konvolüsyon bloğu
-    Conv1D(128, 5, activation='relu', padding='same'),
-    BatchNormalization(),
-    MaxPooling1D(2),
+    LSTM(128, return_sequences=True),
     Dropout(0.3),
-    
-    # İkinci konvolüsyon bloğu
-    Conv1D(256, 3, activation='relu', padding='same'),
-    BatchNormalization(),
-    MaxPooling1D(2),
+    LSTM(64),
     Dropout(0.3),
-    
-    # Üçüncü konvolüsyon bloğu
-    Conv1D(512, 3, activation='relu', padding='same'),
-    BatchNormalization(),
-    GlobalAveragePooling1D(),
-    Dropout(0.4),
-    
-    # Yoğun katmanlar
-    Dense(512, activation='relu'),
-    BatchNormalization(),
-    Dropout(0.5),
     Dense(256, activation='relu'),
-    BatchNormalization(),
-    Dropout(0.5),
-    Dense(y_onehot.shape[1], activation='softmax')
+    Dropout(0.4),
+    Dense(len(categories), activation='softmax')
 ])
 
-# Eğitim parametrelerini güncelle
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001)
-model.compile(
-    optimizer=optimizer,
-    loss='categorical_crossentropy',
-    metrics=['accuracy']
-)
+# 📌 Modeli Derleme
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005),
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
 
-# Modeli eğit
-print("\nModel eğitiliyor...")
-history = model.fit(
-    X_train, y_train,
-    epochs=150,
-    batch_size=32,
-    validation_split=0.2,
-    verbose=1,
-    callbacks=[
-        tf.keras.callbacks.EarlyStopping(
-            monitor='val_accuracy',
-            patience=15,
-            restore_best_weights=True
-        ),
-        tf.keras.callbacks.ReduceLROnPlateau(
-            monitor='val_loss',
-            factor=0.2,
-            patience=5,
-            min_lr=0.00001
-        )
-    ]
-)
+# 📌 Modeli Eğitme
+history = model.fit(X_train, y_train, epochs=50, batch_size=32, validation_split=0.2,
+                    callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)])
 
-# Test et
-print("\nModel test ediliyor...")
+# 📌 Modeli Test Etme
 test_loss, test_accuracy = model.evaluate(X_test, y_test)
-print(f"Test doğruluğu: {test_accuracy:.4f}")
+print(f"\n✅ Test doğruluğu: {test_accuracy:.4f}")
 
-# Modeli kaydet
+# 📌 Modeli Kaydetme
 model.save('voicewatch_model.h5')
-print("\nModel kaydedildi: voicewatch_model.h5")
+print("\n✅ Model kaydedildi: voicewatch_model.h5")
 
-def test_audio_file(file_path, model, label_encoder):
-    """Ses dosyasını sınıflandır"""
+# 📌 Kayıtlı Modeli Yükleme
+model = load_model('voicewatch_model.h5')
+
+# 📌 Bir Ses Dosyasını Test Etme
+def predict_audio(file_path, model, label_encoder):
     feature = extract_mfcc(file_path)
     if feature is None:
         return None
@@ -127,37 +103,31 @@ def test_audio_file(file_path, model, label_encoder):
     feature = feature.reshape(1, 40, 1)
     prediction = model.predict(feature, verbose=0)
     
-    # Tüm tahminleri sırala ve güven skorlarını hesapla
     class_probabilities = prediction[0]
     sorted_indices = np.argsort(class_probabilities)[::-1]
     
-    # En yüksek 3 tahmini göster
-    top_predictions = []
-    for idx in sorted_indices[:3]:
-        class_name = label_encoder.inverse_transform([idx])[0]
-        confidence = class_probabilities[idx]
-        if confidence > 0.1:  # Sadece %10'dan yüksek güven skorlarını göster
-            top_predictions.append((class_name, confidence))
+    top_idx = sorted_indices[0]
+    confidence = class_probabilities[top_idx]
     
-    return top_predictions
+    if confidence > 0.5:
+        class_name = label_encoder.inverse_transform([top_idx])[0]
+        return class_name, confidence
+    return None
 
-# Mixed klasörünü test et
-print("\nMixed klasörü test ediliyor...")
+# 📌 "mixed" Klasöründeki Sesleri Test Etme
 mixed_folder = "mixed"
 
 if os.path.exists(mixed_folder):
     test_files = [f for f in os.listdir(mixed_folder) if f.endswith('.wav')]
+    
     if test_files:
-        print(f"\nToplam {len(test_files)} dosya bulundu.")
+        print(f"\n🔍 {len(test_files)} dosya bulundu. Tahminler yapılıyor...\n")
         for filename in sorted(test_files):
             file_path = os.path.join(mixed_folder, filename)
-            print(f"\nDosya: {filename}")
+            prediction = predict_audio(file_path, model, label_encoder)
             
-            predictions = test_audio_file(file_path, model, label_encoder)
-            
-            if predictions:
-                print("Tahminler:")
-                for i, (class_name, confidence) in enumerate(predictions, 1):
-                    print(f"{i}. {class_name:<15} (Güven: {confidence:.2f})")
+            if prediction:
+                class_name, confidence = prediction
+                print(f"📂 Dosya: {filename} -> 🏷 Tahmin: {class_name} (Güven: {confidence:.2f})")
             else:
-                print("Dosya analiz edilemedi!")
+                print(f"⚠ Dosya: {filename} -> Tanımlanamadı!")
