@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import Conv1D, MaxPooling1D, LSTM, Dense, Dropout, BatchNormalization
+from tensorflow.keras.layers import Input, Conv1D, MaxPooling1D, LSTM, Dense, Dropout, BatchNormalization
 
 # 📌 Ses Dosyasını Yükleme
 def load_audio(file_path, sr=16000):
@@ -62,6 +62,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y_onehot, test_size=0.2, 
 
 # 📌 Model Mimarisi
 model = Sequential([
+    Input(shape=(40, 1)),
     Conv1D(64, 5, activation='relu', input_shape=(40, 1), padding='same'),
     BatchNormalization(),
     MaxPooling1D(2),
