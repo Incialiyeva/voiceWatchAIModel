@@ -96,6 +96,8 @@ print("\n✅ Model kaydedildi: voicewatch_model.h5")
 # 📌 Kayıtlı Modeli Yükleme
 model = load_model('voicewatch_model.h5')
 
+
+
 # 📌 Bir Ses Dosyasını Test Etme
 def predict_audio(file_path, model, label_encoder):
     feature = extract_mfcc(file_path)
@@ -104,7 +106,10 @@ def predict_audio(file_path, model, label_encoder):
     
     feature = feature.reshape(1, 40, 1)
     prediction = model.predict(feature, verbose=0)
-    
+
+    # 🔍 Modelin tam çıkışını terminalde yazdır
+    print(f"\n🔮 Olasılık Dağılımı: {prediction[0]}")  
+
     class_probabilities = prediction[0]
     sorted_indices = np.argsort(class_probabilities)[::-1]
     
@@ -115,6 +120,8 @@ def predict_audio(file_path, model, label_encoder):
         class_name = label_encoder.inverse_transform([top_idx])[0]
         return class_name, confidence
     return None
+
+
 
 # 📌 "mixed" Klasöründeki Sesleri Test Etme
 mixed_folder = "mixed"
