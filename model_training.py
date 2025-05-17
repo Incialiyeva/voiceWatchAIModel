@@ -9,46 +9,44 @@ from sklearn.model_selection import train_test_split
 
 # Configuration
 DATASET_PATH = 'dataset2'
-CATEGORIES = ['glass_breaking', 'fall', 'silence', 'scream']
-MIXED_PATH = 'mixed'
+CATEGORIES    = ['glass_breaking', 'fall', 'silence', 'scream']
+MIXED_PATH    = 'mixed'
 
-SR = 16000            # Sampling rate (Hz)
-DURATION = 2          # Duration of each audio clip in seconds
+SR             = 16000  # Sampling rate (Hz)
+DURATION       = 2      # Duration of each audio clip in seconds
 SAMPLES_PER_FILE = SR * DURATION
-N_MELS = 128          # Number of Mel bands
+N_MELS         = 128    # Number of Mel bands
 
 # Function to extract mel-spectrogram (no saving to file)
 def extract_mel(file_path):
     audio, _ = librosa.load(file_path, sr=SR)
     if len(audio) < SAMPLES_PER_FILE:
-        audio = np.pad(audio, (0, SAMPLES_PER_FILE - len(audio)))  # Zero-padding if too short
+        audio = np.pad(audio, (0, SAMPLES_PER_FILE - len(audio)))
     else:
-        audio = audio[:SAMPLES_PER_FILE]  # Truncate if too long
-    mel = librosa.feature.melspectrogram(y=audio, sr=SR, n_mels=N_MELS)
-    mel_db = librosa.power_to_db(mel, ref=np.max)  # Convert to dB scale
+        audio = audio[:SAMPLES_PER_FILE]
+    mel    = librosa.feature.melspectrogram(y=audio, sr=SR, n_mels=N_MELS)
+    mel_db = librosa.power_to_db(mel, ref=np.max)
     return mel_db
 
 # Load dataset and labels from folders
 def load_dataset():
-    X = []
-    y = []
+    X, y = [], []
     for idx, category in enumerate(CATEGORIES):
-        category_path = os.path.join(DATASET_PATH, category)
-        for file_name in os.listdir(category_path):
-            if file_name.endswith('.wav'):
-                file_path = os.path.join(category_path, file_name)
-                mel_db = extract_mel(file_path)
-                X.append(mel_db)
-                y.append(idx)
-    X = np.array(X)
-    y = np.array(y)
-    return X, y
+        category_dir = os.path.join(DATASET_PATH, category)
+        for fname in os.listdir(category_dir):
+            if not fname.endswith('.wav'):
+                continue
+            path = os.path.join(category_dir, fname)
+            mel  = extract_mel(path)
+            X.append(mel)
+            y.append(idx)
+    return np.array(X), np.array(y)
 
 # Build a simple CNN model
 def create_model(input_shape, num_classes):
-    model = tf.keras.Sequential([
+    return tf.keras.Sequential([
         tf.keras.layers.Input(shape=input_shape),
-        tf.keras.layers.Reshape((N_MELS, -1, 1)),  # Add channel dimension
+        tf.keras.layers.Reshape((N_MELS, -1, 1)),
         tf.keras.layers.Conv2D(32, (3,3), activation='relu'),
         tf.keras.layers.MaxPooling2D((2,2)),
         tf.keras.layers.Conv2D(64, (3,3), activation='relu'),
@@ -56,48 +54,65 @@ def create_model(input_shape, num_classes):
         tf.keras.layers.Flatten(),
         tf.keras.layers.Dense(128, activation='relu'),
         tf.keras.layers.Dense(num_classes, activation='softmax')
-    ])
-    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-    return model
+    ], name='audio_classifier')
 
-# Main pipeline
 def main():
-    print("Loading dataset...")
+    print("Loading dataset…")
     X, y = load_dataset()
 
-    # Split into training and validation sets
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    # train/validation split
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
 
-    # Create CNN model
+    # create & compile
     model = create_model(X_train.shape[1:], len(CATEGORIES))
+    model.compile(
+        optimizer='adam',
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
     model.summary()
 
-    # Train the model
-    print("Training model...")
-    model.fit(X_train, y_train, epochs=20, batch_size=16, validation_data=(X_val, y_val))
+    # train
+    print("\nTraining model…")
+    model.fit(
+        X_train, y_train,
+        epochs=20,
+        batch_size=16,
+        validation_data=(X_val, y_val)
+    )
 
-    # Save the trained model
-    model.save("model_cnn.h5")
-    print("Model saved as model_cnn.h5")
+    # —————————————————————————————————————————
+    # SavedModel olarak dışa aktarma (Keras 3)
+    saved_model_dir = "saved_model"
+    model.export(saved_model_dir)
+    print(f"\n✅ SavedModel formatında kaydedildi: {saved_model_dir}/")
+    # —————————————————————————————————————————
 
-    # Predict 3 random audio files from 'mixed' folder for demo
-    print("\nPredicting 3 random audio files from 'mixed' folder...")
-    all_files = [f for f in os.listdir(MIXED_PATH) if f.endswith('.wav')]
-    selected_files = random.sample(all_files, min(3, len(all_files)))
+    # karışık (mixed) klasöründen 3 rasgele dosya alıp tahmin et
+    print("\nPredicting 3 random audio files from 'mixed' folder…")
+    all_wavs = [f for f in os.listdir(MIXED_PATH) if f.endswith('.wav')]
+    picks    = random.sample(all_wavs, min(3, len(all_wavs)))
 
-    for file_name in selected_files:
-        file_path = os.path.join(MIXED_PATH, file_name)
-        mel_db = extract_mel(file_path)
-        mel_db_batch = np.expand_dims(mel_db, axis=0)  # Add batch dimension
-        prediction = model.predict(mel_db_batch)
-        predicted_class = np.argmax(prediction)
-        print(f"{file_name} -> Prediction: {CATEGORIES[predicted_class]}")
+    for fname in picks:
+        fpath = os.path.join(MIXED_PATH, fname)
+        mel   = extract_mel(fpath)
+        batch = np.expand_dims(mel, axis=0)
+        preds = model.predict(batch)
+        cls   = np.argmax(preds)
 
-        # Plot Mel-spectrogram
+        print(f"{fname} → Predicted: {CATEGORIES[cls]}")
+
+        # Görselleştir
         plt.figure(figsize=(10, 4))
-        librosa.display.specshow(mel_db, sr=SR, hop_length=512, x_axis='time', y_axis='mel')
+        librosa.display.specshow(mel,
+                                 sr=SR,
+                                 hop_length=512,
+                                 x_axis='time',
+                                 y_axis='mel')
         plt.colorbar(format='%+2.0f dB')
-        plt.title(f"Mel Spectrogram - {file_name}\nPredicted: {CATEGORIES[predicted_class]}")
+        plt.title(f"Mel Spectrogram - {fname}\nPredicted: {CATEGORIES[cls]}")
         plt.tight_layout()
         plt.show()
 
