@@ -76,7 +76,11 @@ def main():
     print("Training model...")
     model.fit(X_train, y_train, epochs=20, batch_size=16, validation_data=(X_val, y_val))
 
-    # Select and predict 3 random files from 'mixed' folder
+    # Save the trained model
+    model.save("model_cnn.h5")
+    print("Model saved as model_cnn.h5")
+
+    # Predict 3 random audio files from 'mixed' folder for demo
     print("\nPredicting 3 random audio files from 'mixed' folder...")
     all_files = [f for f in os.listdir(MIXED_PATH) if f.endswith('.wav')]
     selected_files = random.sample(all_files, min(3, len(all_files)))
